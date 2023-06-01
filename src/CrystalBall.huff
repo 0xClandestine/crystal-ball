@@ -1,0 +1,871 @@
+// SPDX-License-Identifier: UNLICENSED
+
+/// @title CrystalBall 🔮
+/// @notice HyVM with unconventional calldata support.
+/// @author Modified from (https://github.com/oguimbal/HyVM).
+/// This would not be possible without Nested.fi ❤️
+/// -----------------------------------------------------------------------
+/// CONSTANTS
+/// -----------------------------------------------------------------------
+
+#define constant EXEC_POINTER_MSLOT = 0x0
+#define constant JUMPTABLE_MSLOT = 0x20
+#define constant KERNEL_MSLOT = 0x220
+#define constant HOST_MEMORY_START = 0x340
+
+/// -----------------------------------------------------------------------
+/// JUMPTABLE
+/// -----------------------------------------------------------------------
+
+/// @dev All the EVM opcodes
+/// Generated from https://www.evm.codes/
+#define jumptable__packed OPCODES_JUMPTABLE {
+    op_stop             op_add          op_mul          op_sub      op_div          op_sdiv         op_mod          op_smod             op_addmod       op_mulmod       op_exp          op_signextend   unused          unused              unused              unused
+    op_lt               op_gt           op_slt          op_sgt      op_eq           op_iszero       op_and          op_or               op_xor          op_not          op_byte         op_shl          op_shr          op_sar              unused              unused
+    op_sha3             unused          unused          unused      unused          unused          unused          unused              unused          unused          unused          unused          unused          unused              unused              unused
+    op_address          op_balance      op_origin       op_caller   op_callvalue    op_calldataload op_calldatasize op_calldatacopy     op_codesize     op_codecopy     op_gasprice     op_extcodesize  op_extcodecopy  op_returndatasize   op_returndatacopy   op_extcodehash
+    op_blockhash        op_coinbase     op_timestamp    op_number   op_difficulty   op_gaslimit     op_chainid      op_selfbalance      op_basefee      unused          unused          unused          unused          unused              unused              unused
+    op_pop              op_mload        op_mstore       op_mstore8  op_sload        op_sstore       op_jump         op_jumpi            op_pc           op_msize        op_gas          op_jumpdest     unused          unused              unused              unused
+    op_push1            op_push2        op_push3        op_push4    op_push5        op_push6        op_push7        op_push8            op_push9        op_push10       op_push11       op_push12       op_push13       op_push14           op_push15           op_push16
+    op_push17           op_push18       op_push19       op_push20   op_push21       op_push22       op_push23       op_push24           op_push25       op_push26       op_push27       op_push28       op_push29       op_push30           op_push31           op_push32
+    op_dup1             op_dup2         op_dup3         op_dup4     op_dup5         op_dup6         op_dup7         op_dup8             op_dup9         op_dup10        op_dup11        op_dup12        op_dup13        op_dup14            op_dup15            op_dup16
+    op_swap1            op_swap2        op_swap3        op_swap4    op_swap5        op_swap6        op_swap7        op_swap8            op_swap9        op_swap10       op_swap11       op_swap12       op_swap13       op_swap14           op_swap15           op_swap16
+    op_log0             op_log1         op_log2         op_log3     op_log4         unused          unused          unused              unused          unused          unused          unused          unused          unused              unused              unused
+    unused              unused          unused          unused      unused          unused          unused          unused              unused          unused          unused          unused          unused          unused              unused              unused
+    unused              unused          unused          unused      unused          unused          unused          unused              unused          unused          unused          unused          unused          unused              unused              unused
+    unused              unused          unused          unused      unused          unused          unused          unused              unused          unused          unused          unused          unused          unused              unused              unused
+    unused              unused          unused          unused      unused          unused          unused          unused              unused          unused          unused          unused          unused          unused              unused              unused
+    op_create           op_call         op_callcode     op_return   op_delegatecall op_create2      unused          unused              unused          unused          op_staticcall   unused          unused          op_revert           op_invalid          selfdestruct
+}
+
+/// -----------------------------------------------------------------------
+/// JUMPTABLE MACROS
+/// -----------------------------------------------------------------------
+
+#define macro INIT_JUMPTABLE() = takes(0) returns(0) {
+    __tablesize(OPCODES_JUMPTABLE) __tablestart(OPCODES_JUMPTABLE) [JUMPTABLE_MSLOT] codecopy
+}
+
+#define macro JUMPTABLE_LOCATION() = takes(1) returns (1) {
+    // Takes              // [opcode]
+    // 2 bytes per instruction (jumptable_packed)
+    0x2 mul               // [0x2 * opcode]
+    [JUMPTABLE_MSLOT] add // [memory location in jumptable]
+    mload                 // [code location]
+
+    // only get the first two bytes
+    0xF0 shr              // [opcode jump location]
+}
+
+#define macro JUMP_TO_OPCODE() = takes(1) returns (0) {
+    // Takes             // [opcode]
+    JUMPTABLE_LOCATION() // [opcode jump location]
+    jump                 // []
+}
+
+/// -----------------------------------------------------------------------
+/// POINTER MACROS
+/// -----------------------------------------------------------------------
+
+/// @dev Get the host instruction at given pointer location, and advance pointer by one.
+#define macro GOTO_AND_ADVANCE() = takes (1) returns (1) {
+    // Takes:                   // [ptr]
+    dup1                        // [ptr, ptr]
+    LOAD_OPCODE()               // [opcode, ptr]
+
+    // Increment the exec pointer to the next byte
+    // equivalent to INCREMENT_EXEC_PTR(), but avoids an mload.
+    swap1                       // [ptr, opcode]
+    0x1 add                     // [new ptr, opcode]
+    [EXEC_POINTER_MSLOT] mstore // [opcode]
+}
+
+/// @dev Load the opcode corresponding to the execution pointer on stack
+#define macro LOAD_OPCODE() = takes(1) returns (1) {
+    // Takes:                   // [ptr]
+    calldataload                // [256 bits of code starting at execution pointer, ptr]
+
+    // extract opcode from leftmost byte
+    // F8 = 248 = 256 - 8
+    0xF8 shr                    // [opcode, ptr]
+}
+
+/// @dev Adjust the top stack item to prevent writing exec pointer.
+///      Top stack item is a memory location.
+///      Offsets all memory instructions to locate them at the start of memory
+///      allocated to host. Everything before will be owned by the VM, and
+///      innaccessible by the host.
+#define macro FIX_MEMORY_OFFSET() = takes (1) returns (1) {
+    // Takes                                        // [mem_offset]
+    // Mask off upper bytes to ensure that the addition will not overflow.
+    // It will corrupt all the memory accesses to very high addresses.
+    // But those cannot be legitimate: they will end-up in out-of-gas anyway.
+    0xffffffffffffffffffffffffffffffffffffffff and  // [mem_offset_masked]
+    [HOST_MEMORY_START] add                         // [mem_offset_masked + HOST_MEMORY_START]
+}
+
+/// @dev Increment the execution pointer location by one byte
+#define macro INCREMENT_EXEC_PTR() = takes(0) returns (0) {
+    0x1
+    INCREMENT_EXEC_PTR_N()
+}
+
+/// @dev Increment the execution pointer location by the amount given on stack n
+#define macro INCREMENT_EXEC_PTR_N() = takes(1) returns (0) {
+    // Takes                    // [n]
+    // load current ptr
+    [EXEC_POINTER_MSLOT] mload  // [ptr, n]
+    // add with value on stack
+    add                         // [new_ptr]
+    // and store it back
+    [EXEC_POINTER_MSLOT] mstore // []
+}
+
+/// @dev Pushes data that has the given size n
+#define macro PICK_DATA() = takes(1) returns (1) {
+    // Takes                    // [n]
+    // get 256 bits at execution pointer
+    [EXEC_POINTER_MSLOT] mload  // [execPtr, n]
+    dup1                        // [execPtr, execPtr, n]
+    calldataload                // [256 bits of code, execPtr, n]
+
+    // duplicate num of bytes
+    dup3                        // [n, code, execPtr, n]
+
+    // will be shifted by: (32 - n)
+    0x20                        // [0x20, n, code, execPtr, n]
+    sub                         // [shiftBy in Bytes, code, execPtr, n]
+    0x8 mul                     // [shiftBy, code, execPtr, n]
+
+    // truncate it
+    shr                         // [ret, execPtr, n]
+
+    // increment pointer
+    swap2                       // [execPtr, n, ret]
+    add                         // [newExecPtr, ret]
+    [EXEC_POINTER_MSLOT] mstore // [ret]
+}
+
+/// @dev Move the pointer to the next instruction
+#define macro CONTINUE() = takes(0) returns (0) {
+    // load the instruction located at this execution pointer
+    [EXEC_POINTER_MSLOT] mload // [ptr]
+
+    GOTO_AND_ADVANCE()         // [opcode]
+
+    // jump to the operation given on stack
+    JUMP_TO_OPCODE()           // []
+}
+
+/// @dev Ensure that execution is in a context of a delegate call.
+///      If not, it will revert as it opens the door to selfdestruct the HyVM
+///      and more security problems:
+///      relying on storage values in the HyVM, using the HyVM as a swap router
+///      and approving token spending, tainting the HyVM (and possibly all users)
+///      by making it call an OFAC sanctioned address and more.
+#define macro ENSURE_DELEGATECALL_CONTEXT() = takes(0) returns (0) {
+    // Copy address HyVM from end of runtimebytecode
+    0x20                                       // [size]
+    dup1                                       // [size, size]
+    codesize                                   // [codesize, size, size]
+    sub                                        // [offset, size]
+    [KERNEL_MSLOT]                             // [returnoffset, offset, size]
+    codecopy                                   // []
+    // load on stack
+    [KERNEL_MSLOT]                             // [KERNEL_MSLOT]
+    mload                                      // [32 bytes]
+    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF // [20 bytes bitmask, 32 bytes]
+    and                                        // [address(hyvm)]
+    // compare to currently executing account
+    address eq                                 // [address(hyvm)==address(this)]
+    wrong_context jumpi                        // []
+}
+
+
+/// -----------------------------------------------------------------------
+/// CONSTRUCTOR
+/// -----------------------------------------------------------------------
+
+/// @dev The constructor stores the address of the HyVm at the end of the
+///      runtime bytecode. See ENSURE_DELEGATECALL_CONTEXT macro.
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // store address of HyVM contract at the end of the runtimecode
+    // memory position at construction time.
+    __codesize(CONSTRUCTOR)   // [offset]
+    dup1                      // [offset, offset]
+    dup1                      // [offset, offset, offset]
+    address                   // [address(this), offset, offset, offset]
+    swap1                     // [offset, address(this), offset, offset]
+    codesize                  // [codesize, offset, address(this), offset, offset]
+    sub                       // [runtime_size, address(this), offset, offset]
+    mstore                    // [offset, offset]
+
+    // Copy the runtimecode in memory
+    codesize                  // [codesize, offset, offset]
+    sub                       // [runtime_size, offset]
+    dup1                      // [runtime_size, runtime_size, offset]
+    swap2                     // [offset, runtime_size, runtime_size]
+    0x00                      // [return_offset, offset, runtime_size, runtime_size]
+    codecopy                  // [runtime_size]
+
+    // Add the address at the end to the size, it is right padded
+    0x20                      // [0x20, runtime_size]
+    add                       // [runtime_size + 0x20]
+    0x00                      // [offset, runtime_size + 0x20]
+    return
+}
+
+/// -----------------------------------------------------------------------
+/// FALLBACK
+/// -----------------------------------------------------------------------
+
+/// @notice Entry point of the HyVM
+#define macro MAIN() = takes(0) returns (0) {
+    // Forbid calls to the HyVM
+    ENSURE_DELEGATECALL_CONTEXT()
+
+    // init memory by storing a word just before the host memory start
+    // so msize will return 0
+    0x0 0x20 [HOST_MEMORY_START] sub mstore
+
+    INIT_JUMPTABLE()
+    CONTINUE()
+
+    notimplemented:
+
+    op_stop:
+        stop
+        CONTINUE()
+
+    op_add:
+        add
+        CONTINUE()
+
+    op_mul:
+        mul
+        CONTINUE()
+
+    op_sub:
+        sub
+        CONTINUE()
+
+    op_div:
+        div
+        CONTINUE()
+
+    op_sdiv:
+        sdiv
+        CONTINUE()
+
+    op_mod:
+        mod
+        CONTINUE()
+
+    op_smod:
+        smod
+        CONTINUE()
+
+    op_addmod:
+        addmod
+        CONTINUE()
+
+    op_mulmod:
+        mulmod
+        CONTINUE()
+
+    op_exp:
+        exp
+        CONTINUE()
+
+    op_signextend:
+        signextend
+        CONTINUE()
+
+    op_lt:
+        lt
+        CONTINUE()
+
+    op_gt:
+        gt
+        CONTINUE()
+
+    op_slt:
+        slt
+        CONTINUE()
+
+    op_sgt:
+        sgt
+        CONTINUE()
+
+    op_eq:
+        eq
+        CONTINUE()
+
+    op_iszero:
+        iszero
+        CONTINUE()
+
+    op_and:
+        and
+        CONTINUE()
+
+    op_or:
+        or
+        CONTINUE()
+
+    op_xor:
+        xor
+        CONTINUE()
+
+    op_not:
+        not
+        CONTINUE()
+
+    op_byte:
+        byte
+        CONTINUE()
+
+    op_shl:
+        shl
+        CONTINUE()
+
+    op_shr:
+        shr
+        CONTINUE()
+
+    op_sar:
+        sar
+        CONTINUE()
+
+    op_sha3:
+        FIX_MEMORY_OFFSET()
+        sha3
+        CONTINUE()
+
+    op_address:
+        address
+        CONTINUE()
+
+    op_balance:
+        balance
+        CONTINUE()
+
+    op_origin:
+        origin
+        CONTINUE()
+
+    op_caller:
+        caller
+        CONTINUE()
+
+    op_callvalue:
+        callvalue
+        CONTINUE()
+
+    /// -----------------------------------------------------------------------
+    /// UNCONVENTIONAL CALLDATA START
+    /// -----------------------------------------------------------------------
+    /// @dev Assumes the offset indicating the starting point of the  
+    /// actual CALLDATA is stored in the last 32 bytes of CALLDATA.
+    ///
+    /// @dev Assumes runtime is encoded as follows:
+    /// abi.encodePacked(runtimeCode, calldata, runtimeCode.length)
+
+    op_calldataload:
+        // takes            // [offset]
+        push1 0x20          // [0x20, offset]
+        calldatasize        // [codesize, 0x20, offset]
+        sub                 // [runtimCodeLengthOffset, offset]
+        calldataload        // [runtimeCodeLength, offset]
+        add                 // [runtimeCodeLength + offset]
+        calldataload        // [value]
+        CONTINUE()
+
+    op_calldatasize:
+        push1 0x20          // [0x20]
+        dup1                // [0x20, 0x20]
+        calldatasize        // [codesize, 0x20, 0x20]
+        sub                 // [runtimCodeLengthOffset, 0x20]
+        calldataload        // [runtimeCodeLength, 0x20]
+        calldatasize        // [codesize, runtimeCodeLength, 0x20]
+        sub                 // [codesize - runtimeCodeLength, 0x20]
+        sub                 // [value]
+        CONTINUE()
+
+    op_calldatacopy:
+        // takes            // [destOffset, offest, size]
+        FIX_MEMORY_OFFSET() // [fixedDestOffset, offest, size]
+        swap1               // [offest, fixedDestOffset, size]
+        push1 0x20          // [0x20, offest, fixedDestOffset, size]
+        calldatasize        // [codesize, 0x20, offest, fixedDestOffset, size]
+        sub                 // [runtimCodeLengthOffset, offest, fixedDestOffset, size]
+        calldataload        // [runtimCodeLength, offest, fixedDestOffset, size]
+        add                 // [runtimCodeLength + offest, fixedDestOffset, size]
+        swap1               // [fixedDestOffset, runtimCodeLength + offest, size]
+        calldatacopy        // [value]
+        CONTINUE()
+
+    /// -----------------------------------------------------------------------
+    /// UNCONVENTIONAL CALLDATA END
+    /// -----------------------------------------------------------------------
+
+    op_codesize:
+        calldatasize
+        CONTINUE()
+
+    op_codecopy:
+        FIX_MEMORY_OFFSET()
+        calldatacopy
+        CONTINUE()
+
+    op_gasprice:
+        gasprice
+        CONTINUE()
+
+    op_extcodesize:
+        extcodesize
+        CONTINUE()
+
+    op_extcodecopy:
+        swap1
+        FIX_MEMORY_OFFSET()
+        swap1
+        extcodecopy
+        CONTINUE()
+
+    op_returndatasize:
+        returndatasize
+        CONTINUE()
+
+    op_returndatacopy:
+        FIX_MEMORY_OFFSET()
+
+        returndatacopy
+        CONTINUE()
+
+    op_extcodehash:
+        extcodehash
+        CONTINUE()
+
+    op_blockhash:
+        blockhash
+        CONTINUE()
+
+    op_coinbase:
+        coinbase
+        CONTINUE()
+
+    op_timestamp:
+        timestamp
+        CONTINUE()
+
+    op_number:
+        number
+        CONTINUE()
+
+    op_difficulty:
+        difficulty
+        CONTINUE()
+
+    op_gaslimit:
+        gaslimit
+        CONTINUE()
+
+    op_chainid:
+        chainid
+        CONTINUE()
+
+    op_selfbalance:
+        selfbalance
+        CONTINUE()
+
+    op_basefee:
+        basefee
+        CONTINUE()
+
+    op_pop:
+        pop
+        CONTINUE()
+
+    op_mload:
+        FIX_MEMORY_OFFSET()
+        mload
+        CONTINUE()
+
+    op_mstore:
+        FIX_MEMORY_OFFSET()
+        mstore
+        CONTINUE()
+
+    op_mstore8:
+        FIX_MEMORY_OFFSET()
+        mstore8
+        CONTINUE()
+
+    op_sload:
+        sload
+        CONTINUE()
+
+    op_sstore:
+        sstore
+        CONTINUE()
+
+    op_jump:
+        GOTO_AND_ADVANCE()
+        0x5B eq iszero op_jump_fail jumpi
+        CONTINUE()
+        op_jump_fail:
+            0x00 0x00 revert
+
+    op_jumpi:
+        swap1
+        op_jump jumpi
+        pop
+        CONTINUE()
+
+    op_pc:
+        0x1
+        [EXEC_POINTER_MSLOT] mload
+        sub
+        CONTINUE()
+
+    op_msize:
+        0x0
+        FIX_MEMORY_OFFSET()
+        msize
+        sub
+        CONTINUE()
+
+    op_gas:
+        gas
+        CONTINUE()
+
+    op_jumpdest:
+        // do nothing
+        CONTINUE()
+        
+    op_push1:
+        0x01
+        PICK_DATA()
+        CONTINUE()
+    op_push2:
+        0x02
+        PICK_DATA()
+        CONTINUE()
+    op_push3:
+        0x03
+        PICK_DATA()
+        CONTINUE()
+    op_push4:
+        0x04
+        PICK_DATA()
+        CONTINUE()
+    op_push5:
+        0x05
+        PICK_DATA()
+        CONTINUE()
+    op_push6:
+        0x06
+        PICK_DATA()
+        CONTINUE()
+    op_push7:
+        0x07
+        PICK_DATA()
+        CONTINUE()
+    op_push8:
+        0x08
+        PICK_DATA()
+        CONTINUE()
+    op_push9:
+        0x09
+        PICK_DATA()
+        CONTINUE()
+    op_push10:
+        0x0a
+        PICK_DATA()
+        CONTINUE()
+    op_push11:
+        0x0b
+        PICK_DATA()
+        CONTINUE()
+    op_push12:
+        0x0c
+        PICK_DATA()
+        CONTINUE()
+    op_push13:
+        0x0d
+        PICK_DATA()
+        CONTINUE()
+    op_push14:
+        0x0e
+        PICK_DATA()
+        CONTINUE()
+    op_push15:
+        0x0f
+        PICK_DATA()
+        CONTINUE()
+    op_push16:
+        0x10
+        PICK_DATA()
+        CONTINUE()
+    op_push17:
+        0x11
+        PICK_DATA()
+        CONTINUE()
+    op_push18:
+        0x12
+        PICK_DATA()
+        CONTINUE()
+    op_push19:
+        0x13
+        PICK_DATA()
+        CONTINUE()
+    op_push20:
+        0x14
+        PICK_DATA()
+        CONTINUE()
+    op_push21:
+        0x15
+        PICK_DATA()
+        CONTINUE()
+    op_push22:
+        0x16
+        PICK_DATA()
+        CONTINUE()
+    op_push23:
+        0x17
+        PICK_DATA()
+        CONTINUE()
+    op_push24:
+        0x18
+        PICK_DATA()
+        CONTINUE()
+    op_push25:
+        0x19
+        PICK_DATA()
+        CONTINUE()
+    op_push26:
+        0x1a
+        PICK_DATA()
+        CONTINUE()
+    op_push27:
+        0x1b
+        PICK_DATA()
+        CONTINUE()
+    op_push28:
+        0x1c
+        PICK_DATA()
+        CONTINUE()
+    op_push29:
+        0x1d
+        PICK_DATA()
+        CONTINUE()
+    op_push30:
+        0x1e
+        PICK_DATA()
+        CONTINUE()
+    op_push31:
+        0x1f
+        PICK_DATA()
+        CONTINUE()
+    op_push32:
+        0x20
+        PICK_DATA()
+        CONTINUE()
+
+    op_dup1:
+        dup1
+        CONTINUE()
+    op_dup2:
+        dup2
+        CONTINUE()
+    op_dup3:
+        dup3
+        CONTINUE()
+    op_dup4:
+        dup4
+        CONTINUE()
+    op_dup5:
+        dup5
+        CONTINUE()
+    op_dup6:
+        dup6
+        CONTINUE()
+    op_dup7:
+        dup7
+        CONTINUE()
+    op_dup8:
+        dup8
+        CONTINUE()
+    op_dup9:
+        dup9
+        CONTINUE()
+    op_dup10:
+        dup10
+        CONTINUE()
+    op_dup11:
+        dup11
+        CONTINUE()
+    op_dup12:
+        dup12
+        CONTINUE()
+    op_dup13:
+        dup13
+        CONTINUE()
+    op_dup14:
+        dup14
+        CONTINUE()
+    op_dup15:
+        dup15
+        CONTINUE()
+    op_dup16:
+        dup16
+        CONTINUE()
+
+    op_swap1:
+        swap1
+        CONTINUE()
+    op_swap2:
+        swap2
+        CONTINUE()
+    op_swap3:
+        swap3
+        CONTINUE()
+    op_swap4:
+        swap4
+        CONTINUE()
+    op_swap5:
+        swap5
+        CONTINUE()
+    op_swap6:
+        swap6
+        CONTINUE()
+    op_swap7:
+        swap7
+        CONTINUE()
+    op_swap8:
+        swap8
+        CONTINUE()
+    op_swap9:
+        swap9
+        CONTINUE()
+    op_swap10:
+        swap10
+        CONTINUE()
+    op_swap11:
+        swap11
+        CONTINUE()
+    op_swap12:
+        swap12
+        CONTINUE()
+    op_swap13:
+        swap13
+        CONTINUE()
+    op_swap14:
+        swap14
+        CONTINUE()
+    op_swap15:
+        swap15
+        CONTINUE()
+    op_swap16:
+        swap16
+        CONTINUE()
+
+    op_log0:
+        FIX_MEMORY_OFFSET()
+        log0
+        CONTINUE()
+    op_log1:
+        FIX_MEMORY_OFFSET()
+        log1
+        CONTINUE()
+    op_log2:
+        FIX_MEMORY_OFFSET()
+        log2
+        CONTINUE()
+    op_log3:
+        FIX_MEMORY_OFFSET()
+        log3
+        CONTINUE()
+    op_log4:
+        FIX_MEMORY_OFFSET()
+        log4
+        CONTINUE()
+
+    op_create:
+        swap1
+        FIX_MEMORY_OFFSET()
+        swap1
+        create
+        CONTINUE()
+
+    op_call:
+        // takes            // [gas, address, value, argsOffset, argsSize, retOffset, retSize]
+        swap3               // [argsOffset, address, value, gas, argsSize, retOffset, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmArgsOffset, address, value, gas, argsSize, retOffset, retSize]
+        swap3               // [gas, address, value, hyvmArgsOffset, argsSize, retOffset, retSize]
+        swap5               // [retOffset, address, value, hyvmArgsOffset, argsSize, gas, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmRetOffset, address, value, hyvmArgsOffset, argsSize, gas, retSize]
+        swap5               // [gas, address, value, hyvmArgsOffset, argsSize, hyvmRetOffset, retSize]
+        call                // [success]
+        CONTINUE()
+
+    op_callcode:
+        0x00 0x00 revert
+
+    op_return:
+        // takes            // [retOffset, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmRetOffset, retSize]
+        return
+
+    op_delegatecall:
+        // takes            // [gas, address, argsOffset, argsSize, retOffset, retSize]
+        swap2               // [argsOffset, address, gas, argsSize, retOffset, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmArgsOffset, gas, address, argsSize, retOffset, retSize]
+        swap2               // [gas, address, hyvmArgsOffset, argsSize, retOffset, retSize]
+        swap4               // [retOffset, address, hyvmArgsOffset, argsSize, gas, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmRetOffset, address, hyvmArgsOffset, argsSize, gas, retSize]
+        swap4               // [gas, address, hyvmArgsOffset, argsSize, hyvmRetOffset, retSize]
+        delegatecall        // [success]
+        CONTINUE()
+
+    wrong_context:
+        0x00 0x00 revert
+
+    op_create2:
+        // takes            // [value, offset, size, salt]
+        swap1               // [offset, value, size, salt]
+        FIX_MEMORY_OFFSET() // [hyvmOffset, value, size, salt]
+        swap1               // [value, hyvmOffset, size, salt]
+        create2             // [success]
+        CONTINUE()
+
+    op_staticcall:
+        // takes            // [gas, address, argsOffset, argsSize, retOffset, retSize]
+        swap2               // [argsOffset, address, gas, argsSize, retOffset, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmArgsOffset, address, gas, argsSize, retOffset, retSize]
+        swap2               // [gas, address, hyvmArgsOffset, argsSize, retOffset, retSize]
+
+        swap4               // [retOffset, address, hyvmArgsOffset, argsSize, gas, retSize]
+        FIX_MEMORY_OFFSET() // [hyvmRetOffset, address, hyvmArgsOffset, argsSize, gas, retSize]
+        swap4               // [gas, address, hyvmArgsOffset, argsSize, hyvmRetOffset, retSize]
+
+        staticcall          // [success]
+        CONTINUE()
+
+    op_revert:
+        // takes            // [offset, size]
+        FIX_MEMORY_OFFSET() // [hyvmOffset, size]
+        revert              // [hyvmOffset, size]
+        CONTINUE()
+
+    op_invalid:
+        invalid
+        CONTINUE()
+
+    selfdestruct:
+        0x00 0x00 revert
+
+    unused:
+        0x00 0x00 revert
+}
