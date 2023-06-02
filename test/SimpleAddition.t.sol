@@ -5,6 +5,12 @@ import "forge-std/Test.sol";
 import "../src/LibCrystalBall.sol";
 import "./SimpleAddition.sol";
 
+contract SimpleAddition {
+    function add(uint256 a, uint256 b) external pure returns (uint256) {
+        return a + b;
+    }
+}
+
 contract SimpleAdditionTest is Test {
     using LibCrystalBall for CrystalBall;
 
