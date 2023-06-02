@@ -32,7 +32,9 @@ library LibCrystalBall {
         bytes memory callData
     ) internal returns (bytes memory) {
         (, bytes memory returnData) = address(crystalBall).delegatecall(
-            abi.encodePacked(bytecode, callData, bytecode.length)
+            abi.encodePacked(
+                bytecode, bytes4(hex"00000000"), callData, bytecode.length
+            )
         );
 
         return returnData;
@@ -50,6 +52,7 @@ library LibCrystalBall {
                 replaceFirst(
                     bytecode, abi.encodePacked(selector), hex"00000000"
                 ),
+                bytes4(hex"00000000"),
                 callData,
                 bytecode.length
             )

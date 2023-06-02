@@ -2,16 +2,7 @@
 pragma solidity ^0.8.13;
 
 contract SimpleAddition {
-    function add() external pure returns (uint256) {
-        // Load args
-        uint256 a;
-        uint256 b;
-
-        assembly {
-            a := calldataload(0x00)
-            b := calldataload(0x20)
-        }
-
+    function add(uint256 a, uint256 b) external pure returns (uint256) {
         return a + b;
     }
 }
