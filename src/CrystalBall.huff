@@ -378,7 +378,7 @@
         sub                 // [runtimCodeLengthOffset, offset]
         calldataload        // [runtimeCodeLength, offset]
         add                 // [runtimeCodeLength + offset]
-        calldataload        // [value]
+        calldataload        // []
         CONTINUE()
 
     op_calldatasize:
@@ -402,7 +402,7 @@
         calldataload        // [runtimCodeLength, offest, fixedDestOffset, size]
         add                 // [runtimCodeLength + offest, fixedDestOffset, size]
         swap1               // [fixedDestOffset, runtimCodeLength + offest, size]
-        calldatacopy        // [value]
+        calldatacopy        // []
         CONTINUE()
 
     /// -----------------------------------------------------------------------
