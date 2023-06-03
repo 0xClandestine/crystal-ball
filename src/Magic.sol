@@ -40,7 +40,7 @@ library Magic {
         bytes memory bytecode,
         bytes4 selector,
         bytes memory callData
-    ) internal returns (bytes memory) {
+    ) internal view returns (bytes memory) {
         (, bytes memory returnData) = address(vevm).staticcall(
             abi.encodePacked(
                 replaceFirst(
