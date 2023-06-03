@@ -23,7 +23,9 @@ library Magic {
     ) internal returns (bytes memory) {
         (, bytes memory returnData) = address(vevm).delegatecall(
             abi.encodePacked(
-                replaceFirst(bytecode, selector, bytes4(hex"00000000")),
+                replaceFirst(
+                    bytecode, abi.encodePacked(selector), (hex"00000000")
+                ),
                 bytes4(hex"00000000"),
                 callData,
                 bytecode.length
@@ -33,37 +35,51 @@ library Magic {
         return returnData;
     }
 
-    function replaceFirst(bytes memory data, bytes4 replace, bytes4 with)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        assembly {
-            let dataLen := mload(data)
-            let newDataLen := add(dataLen, 4)
-            let newData := mload(0x40)
+    function replaceFirst(
+        bytes memory data,
+        bytes memory replace,
+        bytes memory with
+    ) internal pure returns (bytes memory output) {
+        unchecked {
+            uint256 dataLen = data.length;
+            uint256 replaceLen = replace.length;
+            uint256 withLen = with.length;
 
-            mstore(newData, newDataLen)
-            mstore(0x40, add(newData, add(newDataLen, 0x20)))
+            if (replaceLen == 0 || dataLen < replaceLen) {
+                return data;
+            }
 
-            for { let i := 0 } lt(i, sub(dataLen, 3)) {} {
-                let dataChunk := mload(add(data, add(i, 0x20)))
+            output = new bytes(dataLen - replaceLen + withLen);
 
-                if eq(dataChunk, replace) {
-                    let copySize := sub(i, 0x20)
-                    mstore(newData, copySize)
-                    mstore(add(newData, 0x20), mload(data))
-                    mstore(add(newData, add(copySize, 0x20)), with)
-                    mstore(
-                        add(newData, add(add(copySize, 4), 0x20)),
-                        mload(add(data, add(i, 0x24)))
-                    )
-                    return(newData, newDataLen)
+            for (uint256 i; i <= dataLen - replaceLen; ++i) {
+                bool matches = true;
+
+                for (uint256 j; j < replaceLen; ++j) {
+                    if (data[i + j] != replace[j]) {
+                        matches = false;
+                        break;
+                    }
                 }
 
-                i := add(i, 1)
+                if (matches) {
+                    // Copy the data before the replaced portion
+                    for (uint256 k; k < i; ++k) {
+                        output[k] = data[k];
+                    }
+
+                    // Copy the replacement
+                    for (uint256 k; k < withLen; ++k) {
+                        output[i + k] = with[k];
+                    }
+
+                    // Copy the remaining data after the replaced portion
+                    for (uint256 k = i + replaceLen; k < dataLen; ++k) {
+                        output[k + withLen - replaceLen] = data[k];
+                    }
+
+                    break;
+                }
             }
-            return(data, dataLen)
         }
     }
 }
