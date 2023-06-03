@@ -4,7 +4,7 @@ pragma solidity ^0.8.13;
 abstract contract CrystalBall {}
 
 /// @dev Creates a virtual-evm instance.
-function vevm() returns (CrystalBall instance) {
+function virtualEvm() returns (CrystalBall instance) {
     bytes memory creationCode = HYVM_BYTECODE;
     assembly {
         instance := create(0, add(creationCode, 0x20), mload(creationCode))
@@ -14,7 +14,6 @@ function vevm() returns (CrystalBall instance) {
 }
 
 library Magic {
-    // vevm().delegatecall(bytecode, selector, calldata)
     function delegatecall(
         CrystalBall vevm,
         bytes memory bytecode,
@@ -22,6 +21,27 @@ library Magic {
         bytes memory callData
     ) internal returns (bytes memory) {
         (, bytes memory returnData) = address(vevm).delegatecall(
+            abi.encodePacked(
+                replaceFirst(
+                    bytecode, abi.encodePacked(selector), (hex"00000000")
+                ),
+                bytes4(hex"00000000"),
+                callData,
+                bytecode.length
+            )
+        );
+
+        return returnData;
+    }
+
+    /// @dev Must be using static vevm wrapper otherwise this will always revert.
+    function staticcall(
+        CrystalBall vevm,
+        bytes memory bytecode,
+        bytes4 selector,
+        bytes memory callData
+    ) internal returns (bytes memory) {
+        (, bytes memory returnData) = address(vevm).staticcall(
             abi.encodePacked(
                 replaceFirst(
                     bytecode, abi.encodePacked(selector), (hex"00000000")
