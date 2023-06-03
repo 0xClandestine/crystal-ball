@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
-import "../src/LibCrystalBall.sol";
+import "../src/Magic.sol";
 
 contract SimpleAddition {
     function add(uint256 a, uint256 b) external pure returns (uint256) {
@@ -11,13 +11,19 @@ contract SimpleAddition {
 }
 
 contract SimpleAdditionTest is Test {
-    using LibCrystalBall for CrystalBall;
+    using Magic for CrystalBall;
+
+    CrystalBall cb;
+
+    function setUp() public {
+        cb = vevm();
+    }
 
     function testAdd() public {
         uint256 a = 400;
         uint256 b = 20;
 
-        bytes memory returnData = hyvm().delegatecall(
+        bytes memory returnData = cb.delegatecall(
             type(SimpleAddition).runtimeCode,
             SimpleAddition.add.selector,
             abi.encodePacked(a, b)

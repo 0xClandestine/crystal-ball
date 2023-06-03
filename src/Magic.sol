@@ -3,7 +3,8 @@ pragma solidity ^0.8.13;
 
 abstract contract CrystalBall {}
 
-function hyvm() returns (CrystalBall instance) {
+/// @dev Creates a virtual-evm instance.
+function vevm() returns (CrystalBall instance) {
     bytes memory creationCode = HYVM_BYTECODE;
     assembly {
         instance := create(0, add(creationCode, 0x20), mload(creationCode))
@@ -12,46 +13,17 @@ function hyvm() returns (CrystalBall instance) {
     }
 }
 
-library LibCrystalBall {
-    // hyvm().delegatecall(bytecode)
-    function delegatecall(CrystalBall crystalBall, bytes memory bytecode)
-        internal
-        returns (bytes memory)
-    {
-        (, bytes memory returnData) = address(crystalBall).delegatecall(
-            abi.encodePacked(bytecode, bytecode.length)
-        );
-
-        return returnData;
-    }
-
-    // hyvm().delegatecall(bytecode, calldata)
+library Magic {
+    // vevm().delegatecall(bytecode, selector, calldata)
     function delegatecall(
-        CrystalBall crystalBall,
-        bytes memory bytecode,
-        bytes memory callData
-    ) internal returns (bytes memory) {
-        (, bytes memory returnData) = address(crystalBall).delegatecall(
-            abi.encodePacked(
-                bytecode, bytes4(hex"00000000"), callData, bytecode.length
-            )
-        );
-
-        return returnData;
-    }
-
-    // hyvm().delegatecall(bytecode, selector, calldata)
-    function delegatecall(
-        CrystalBall crystalBall,
+        CrystalBall vevm,
         bytes memory bytecode,
         bytes4 selector,
         bytes memory callData
     ) internal returns (bytes memory) {
-        (, bytes memory returnData) = address(crystalBall).delegatecall(
+        (, bytes memory returnData) = address(vevm).delegatecall(
             abi.encodePacked(
-                replaceFirst(
-                    bytecode, abi.encodePacked(selector), hex"00000000"
-                ),
+                replaceFirst(bytecode, selector, bytes4(hex"00000000")),
                 bytes4(hex"00000000"),
                 callData,
                 bytecode.length
@@ -61,56 +33,67 @@ library LibCrystalBall {
         return returnData;
     }
 
-    function replaceFirst(
-        bytes memory data,
-        bytes memory replace,
-        bytes memory with
-    ) internal pure returns (bytes memory) {
-        unchecked {
-            uint256 dataLen = data.length;
-            uint256 replaceLen = replace.length;
-            uint256 withLen = with.length;
+    function replaceFirst(bytes memory data, bytes4 replace, bytes4 with)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        assembly {
+            // Get data length
+            let dataLen := mload(data)
 
-            if (replaceLen == 0 || dataLen < replaceLen) {
-                return data;
-            }
+            // Check if dataLen is less than 4
+            // If true, return data
+            if lt(dataLen, 4) { return(data, dataLen) }
 
-            bytes memory newData = new bytes(dataLen - replaceLen + withLen);
+            // Calculate new data length
+            let newDataLen := add(dataLen, 4)
 
-            uint256 i;
+            // Allocate memory for newData
+            let newData := mload(0x40)
+            
+            mstore(newData, newDataLen)
 
-            while (i <= dataLen - replaceLen) {
-                bool matches = true;
-                for (uint256 j = 0; j < replaceLen; j++) {
-                    if (data[i + j] != replace[j]) {
-                        matches = false;
-                        break;
-                    }
+            // Increase free memory pointer
+            mstore(0x40, add(newData, add(newDataLen, 0x20)))
+
+            // Set loop counters
+            let i := 0
+
+            // Loop over data
+            for {} lt(i, sub(dataLen, 3)) {} {
+                // Compare 4-byte chunks
+                let dataChunk := mload(add(data, add(i, 0x20)))
+                let matches := eq(dataChunk, replace)
+
+                // Check if matches
+                if matches {
+                    // Copy data before replaced portion
+                    let copySize := sub(i, 0x20)
+                    mstore(newData, copySize)
+                    mstore(add(newData, 0x20), mload(data))
+
+                    // Copy replacement
+                    mstore(add(newData, add(copySize, 0x20)), with)
+
+                    // Copy remaining data after replaced portion
+                    let remainingSize := sub(dataLen, add(i, 0x20))
+                    let copyOffset := add(i, 0x24)
+                    mstore(
+                        add(newData, add(add(copySize, 4), 0x20)),
+                        mload(add(data, copyOffset))
+                    )
+
+                    // Return newData
+                    return(newData, newDataLen)
                 }
 
-                if (matches) {
-                    // Copy the data before the replaced portion
-                    for (uint256 k; k < i; ++k) {
-                        newData[k] = data[k];
-                    }
-
-                    // Copy the replacement
-                    for (uint256 k; k < withLen; ++k) {
-                        newData[i + k] = with[k];
-                    }
-
-                    // Copy the remaining data after the replaced portion
-                    for (uint256 k = i + replaceLen; k < dataLen; ++k) {
-                        newData[k + withLen - replaceLen] = data[k];
-                    }
-
-                    return newData;
-                }
-
-                ++i;
+                // Increment data byte counter
+                i := add(i, 1)
             }
 
-            return data;
+            // Return original data
+            return(data, dataLen)
         }
     }
 }
