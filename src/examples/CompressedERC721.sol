@@ -1,45 +1,50 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-// import "solady/Milady.sol";
-// import "../Magic.sol";
+import "solady/Milady.sol";
+import "../Magic.sol";
 
-// contract CompressedTokenUri {
-//     function uri(uint256 id) external view returns (string memory) {}
-// }
+contract CompressedTokenUri {
+    function tokenURI(uint256 id)
+        external
+        view
+        virtual
+        returns (string memory)
+    {}
+}
 
-// abstract contract CompressedERC721 is ERC721 {
-//     using Magic for CrystalBall;
+abstract contract CompressedERC721 is ERC721 {
+    using Magic for CrystalBall;
 
-//     address private immutable crystalBall;
+    CrystalBall private immutable vevm;
 
-//     bytes private immutable flzCompressedTokenUriBytecode;
+    address private immutable flzCompressedTokenUriBytecodePointer;
 
-//     constructor(
-//         address _crystalBall,
-//         bytes memory _flzCompressedTokenUriBytecode
-//     ) {
-//         crystalBall = _crystalBall;
-//         flzCompressedTokenUriBytecode = _flzCompressedTokenUriBytecode;
-//     }
+    constructor(
+        CrystalBall _vevm,
+        bytes memory _flzCompressedTokenUriBytecode
+    ) {
+        vevm = _vevm;
+        flzCompressedTokenUriBytecodePointer =
+            SSTORE2.write(_flzCompressedTokenUriBytecode);
+    }
 
-//     function uri(uint256 id)
-//         external
-//         view
-//         virtual
-//         override
-//         returns (string memory)
-//     {
-//         bytes memory tokenUriBytecode =
-//             LibZip.flzDecompress(flzCompressedTokenUriBytecode);
+    function tokenURI(uint256 id)
+        public
+        view
+        virtual
+        override
+        returns (string memory)
+    {
+        bytes memory tokenUriBytecode = LibZip.flzDecompress(
+            SSTORE2.read(flzCompressedTokenUriBytecodePointer)
+        );
 
-//         return abi.decode(
-//             crystalBall.staticcall(
-//                 abi.encodePacked(
-//                     tokenUriBytecode, bytes4(0), id, tokenUriBytecode.length
-//                 )
-//             ),
-//             (string)
-//         );
-//     }
-// }
+        return abi.decode(
+            vevm.staticcall(
+                tokenUriBytecode, this.tokenURI.selector, abi.encodePacked(id)
+            ),
+            (string)
+        );
+    }
+}
