@@ -39,60 +39,30 @@ library Magic {
         returns (bytes memory)
     {
         assembly {
-            // Get data length
             let dataLen := mload(data)
-
-            // Check if dataLen is less than 4
-            // If true, return data
-            if lt(dataLen, 4) { return(data, dataLen) }
-
-            // Calculate new data length
             let newDataLen := add(dataLen, 4)
-
-            // Allocate memory for newData
             let newData := mload(0x40)
-            
-            mstore(newData, newDataLen)
 
-            // Increase free memory pointer
+            mstore(newData, newDataLen)
             mstore(0x40, add(newData, add(newDataLen, 0x20)))
 
-            // Set loop counters
-            let i := 0
-
-            // Loop over data
-            for {} lt(i, sub(dataLen, 3)) {} {
-                // Compare 4-byte chunks
+            for { let i := 0 } lt(i, sub(dataLen, 3)) {} {
                 let dataChunk := mload(add(data, add(i, 0x20)))
-                let matches := eq(dataChunk, replace)
 
-                // Check if matches
-                if matches {
-                    // Copy data before replaced portion
+                if eq(dataChunk, replace) {
                     let copySize := sub(i, 0x20)
                     mstore(newData, copySize)
                     mstore(add(newData, 0x20), mload(data))
-
-                    // Copy replacement
                     mstore(add(newData, add(copySize, 0x20)), with)
-
-                    // Copy remaining data after replaced portion
-                    let remainingSize := sub(dataLen, add(i, 0x20))
-                    let copyOffset := add(i, 0x24)
                     mstore(
                         add(newData, add(add(copySize, 4), 0x20)),
-                        mload(add(data, copyOffset))
+                        mload(add(data, add(i, 0x24)))
                     )
-
-                    // Return newData
                     return(newData, newDataLen)
                 }
 
-                // Increment data byte counter
                 i := add(i, 1)
             }
-
-            // Return original data
             return(data, dataLen)
         }
     }
