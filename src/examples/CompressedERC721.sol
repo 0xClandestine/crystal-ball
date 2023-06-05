@@ -2,7 +2,6 @@
 pragma solidity ^0.8.13;
 
 import "solady/Milady.sol";
-import "../Magic.sol";
 
 contract CompressedTokenUri {
     function tokenURI(uint256 id)
@@ -14,16 +13,11 @@ contract CompressedTokenUri {
 }
 
 abstract contract CompressedERC721 is ERC721 {
-    using Magic for CrystalBall;
-
-    CrystalBall private immutable vevm;
+    address private immutable vevm;
 
     address private immutable flzCompressedTokenUriBytecodePointer;
 
-    constructor(
-        CrystalBall _vevm,
-        bytes memory _flzCompressedTokenUriBytecode
-    ) {
+    constructor(address _vevm, bytes memory _flzCompressedTokenUriBytecode) {
         vevm = _vevm;
         flzCompressedTokenUriBytecodePointer =
             SSTORE2.write(_flzCompressedTokenUriBytecode);
@@ -40,11 +34,18 @@ abstract contract CompressedERC721 is ERC721 {
             SSTORE2.read(flzCompressedTokenUriBytecodePointer)
         );
 
-        return abi.decode(
-            vevm.staticcall(
-                tokenUriBytecode, abi.encodePacked(this.tokenURI.selector, id)
-            ),
-            (string)
+        (, bytes memory returnData) = vevm.staticcall(
+            abi.encodePacked(
+                // runtime
+                tokenUriBytecode,
+                // calldata
+                this.tokenURI.selector,
+                id,
+                // runtimeLength (needed for calldata support)
+                tokenUriBytecode.length
+            )
         );
+
+        return abi.decode(returnData, (string));
     }
 }

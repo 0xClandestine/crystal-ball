@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
 import "solady/Milady.sol";
-import "../../src/Magic.sol";
+import "../Deployer.sol";
 import "../../src/examples/OptimisticContract.sol";
 
 // Test vars
@@ -43,13 +43,11 @@ contract Bet {
 }
 
 contract OptimisticContractTest is Test {
-    using Magic for CrystalBall;
-
-    CrystalBall immutable vevm;
+    address immutable vevm;
     address immutable optimisticContract;
 
     constructor() {
-        vevm = CrystalBall(address(virtualEvm()));
+        vevm = deploy(CRYSTAL_BALL_BYTECODE);
         optimisticContract = address(new OptimisticContract());
         vm.deal(optimisticContract, 1 ether);
         vm.etch(address(oracle), type(Oracle).runtimeCode);
@@ -76,11 +74,14 @@ contract OptimisticContractTest is Test {
         vm.deal(bet, 1 ether);
         vm.warp(maturity + 1);
         vm.prank(player1);
-        bet.call(
+        (bool success, bytes memory returnData) = bet.call(
             abi.encode(
                 type(Bet).runtimeCode, abi.encodePacked(Bet.escrow.selector)
             )
         );
+
+        success;
+        returnData;
 
         assertEq(bet.balance, 0 ether);
         assertEq(player1.balance, 1 ether);

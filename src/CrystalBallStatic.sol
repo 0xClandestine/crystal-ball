@@ -16,11 +16,8 @@ contract CrystalBallStatic {
         returns (bytes memory)
     {
         if (msg.sender != address(this)) revert();
-
         (bool success, bytes memory data) = vevm.delegatecall(callData);
-
         if (!success) revert BadDelegatecall();
-
         return data;
     }
 

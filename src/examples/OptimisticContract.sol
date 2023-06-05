@@ -2,16 +2,13 @@
 pragma solidity ^0.8.13;
 
 import "solady/utils/Clone.sol";
-import "../Magic.sol";
 
 contract OptimisticContract is Clone {
-    using Magic for CrystalBall;
-
-    function vevm() public pure returns (CrystalBall) {
-        return CrystalBall(_getArgAddress(0x0));
+    function vevm() private pure returns (address) {
+        return _getArgAddress(0x0);
     }
 
-    function bytecodeHash() public pure returns (bytes32) {
+    function bytecodeHash() private pure returns (bytes32) {
         return _getArgBytes32(0x14);
     }
 
@@ -30,6 +27,15 @@ contract OptimisticContract is Clone {
 
         if (keccak256(bytecode) != bytecodeHash()) revert Bad();
 
-        returnData = vevm().delegatecall(bytecode, callData);
+        (, returnData) = vevm().delegatecall(
+            abi.encodePacked(
+                // runtime
+                bytecode,
+                // calldata
+                callData,
+                // runtimeLength (needed for calldata support)
+                bytecode.length
+            )
+        );
     }
 }

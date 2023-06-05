@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Test.sol";
-import "../src/Magic.sol";
+import "./Deployer.sol";
 import "../src/CrystalBallStatic.sol";
 
 contract SimpleAddition {
@@ -12,22 +12,27 @@ contract SimpleAddition {
 }
 
 contract SimpleAdditionTest is Test {
-    using Magic for CrystalBall;
-
-    CrystalBall vevm;
+    address vevm;
 
     function setUp() public {
-        vevm =
-            CrystalBall(address(new CrystalBallStatic(address(virtualEvm()))));
+        vevm = address(new CrystalBallStatic(deploy(CRYSTAL_BALL_BYTECODE)));
     }
 
     function testAdd() public {
         uint256 a = 400;
         uint256 b = 20;
 
-        bytes memory returnData = vevm.staticcall(
-            type(SimpleAddition).runtimeCode,
-            abi.encodePacked(SimpleAddition.add.selector, a, b)
+        (, bytes memory returnData) = vevm.staticcall(
+            abi.encodePacked(
+                // runtime
+                type(SimpleAddition).runtimeCode,
+                // calldata
+                SimpleAddition.add.selector,
+                a,
+                b,
+                // runtimeLength (needed for calldata support)
+                type(SimpleAddition).runtimeCode.length
+            )
         );
 
         assertEq(abi.decode(returnData, (uint256)), 420);
