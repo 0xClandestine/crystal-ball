@@ -25,11 +25,11 @@ contract OptimisticContract is Clone {
         virtual
         returns (bytes memory returnData)
     {
-        (bytes memory bytecode, bytes4 selector, bytes memory callData) =
-            abi.decode(data, (bytes, bytes4, bytes));
+        (bytes memory bytecode, bytes memory callData) =
+            abi.decode(data, (bytes, bytes));
 
         if (keccak256(bytecode) != bytecodeHash()) revert Bad();
 
-        returnData = vevm().delegatecall(bytecode, selector, callData);
+        returnData = vevm().delegatecall(bytecode, callData);
     }
 }

@@ -78,7 +78,7 @@ contract OptimisticContractTest is Test {
         vm.prank(player1);
         bet.call(
             abi.encode(
-                type(Bet).runtimeCode, Bet.escrow.selector, abi.encodePacked()
+                type(Bet).runtimeCode, abi.encodePacked(Bet.escrow.selector)
             )
         );
 

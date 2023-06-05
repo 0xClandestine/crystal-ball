@@ -42,7 +42,7 @@ abstract contract CompressedERC721 is ERC721 {
 
         return abi.decode(
             vevm.staticcall(
-                tokenUriBytecode, this.tokenURI.selector, abi.encodePacked(id)
+                tokenUriBytecode, abi.encodePacked(this.tokenURI.selector, id)
             ),
             (string)
         );

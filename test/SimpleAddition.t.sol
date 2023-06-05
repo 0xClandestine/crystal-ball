@@ -27,8 +27,7 @@ contract SimpleAdditionTest is Test {
 
         bytes memory returnData = vevm.staticcall(
             type(SimpleAddition).runtimeCode,
-            SimpleAddition.add.selector,
-            abi.encodePacked(a, b)
+            abi.encodePacked(SimpleAddition.add.selector, a, b)
         );
 
         assertEq(abi.decode(returnData, (uint256)), 420);
