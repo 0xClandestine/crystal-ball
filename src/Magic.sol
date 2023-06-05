@@ -55,6 +55,7 @@ library Magic {
         return returnData;
     }
 
+    /// @dev Modified from (https://github.com/Vectorized/solady/blob/main/src/utils/LibString.sol)
     function replaceFirst(
         bytes memory subject,
         bytes memory search,

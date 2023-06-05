@@ -36,7 +36,7 @@ contract Bet {
 
         address winner = oracle.price() > 1500 ether ? player0 : player1;
         uint256 balance = address(this).balance;
-        
+
         winner.safeTransferETH(balance);
         emit BalanceTransfer(winner, balance);
     }
