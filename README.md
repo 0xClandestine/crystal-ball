@@ -19,8 +19,7 @@ contract SimpleAddition {
 // runtime
 abi.encodePacked(
     type(SimpleAddition).runtimeCode,
-    hex"00000000",
-    abi.encodePacked(a, b),
+    abi.encodeCall(SimpleAddition.add, (a, b))
     runtimeCode.length
 );
 ```
