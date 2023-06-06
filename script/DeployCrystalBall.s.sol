@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Script.sol";
-import "Deployer.sol";
+import "../test/Deployer.sol";
 
 contract DeployCrystalBallScript is Script {
     function run() public {
