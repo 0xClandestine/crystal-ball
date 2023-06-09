@@ -53,7 +53,47 @@ contract OptimisticContractTest is Test {
         vm.etch(address(oracle), type(Oracle).runtimeCode);
     }
 
-    function testNormalTimelock() public {
+    function testNormalBetDeployCost() public {
+        new Bet();
+    }
+
+    function testOptimisticBetDeployCost() public {
+        LibClone.clone(
+            optimisticContract,
+            abi.encodePacked(vevm, keccak256(type(Bet).runtimeCode))
+        );
+    }
+
+    function testNormalEscrowCost() public {
+        vm.pauseGasMetering();
+        Bet bet = new Bet();
+        vm.deal(address(bet), 1 ether);
+        vm.warp(maturity + 1);
+        vm.prank(player1);
+        vm.resumeGasMetering();
+
+        bet.escrow();
+    }
+
+    function testOptimisticEscrowCost() public {
+        vm.pauseGasMetering();
+        address bet = LibClone.clone(
+            optimisticContract,
+            abi.encodePacked(vevm, keccak256(type(Bet).runtimeCode))
+        );
+        vm.deal(address(bet), 1 ether);
+        vm.warp(maturity + 1);
+        vm.prank(player1);
+        vm.resumeGasMetering();
+
+        bet.call(
+            abi.encode(
+                type(Bet).runtimeCode, abi.encodePacked(Bet.escrow.selector)
+            )
+        );
+    }
+
+    function testNormalBet() public {
         Bet bet = new Bet();
 
         vm.deal(address(bet), 1 ether);
@@ -65,7 +105,7 @@ contract OptimisticContractTest is Test {
         assertEq(player1.balance, 1 ether);
     }
 
-    function testOptimisticTimelock() public {
+    function testOptimisticBet() public {
         address bet = LibClone.clone(
             optimisticContract,
             abi.encodePacked(vevm, keccak256(type(Bet).runtimeCode))
